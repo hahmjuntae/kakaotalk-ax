@@ -50,7 +50,8 @@ def kakaotalk_ax_read(window_title: str, limit: int = 50, offset: int = 0, snaps
     다음 페이지는 nextOffset과 snapshotId를 offset/snapshot_id로 전달하세요.
     새 메시지 등으로 행이 바뀌면 snapshot_changed를 반환합니다. offset=0부터 다시 읽으세요.
     이미지는 attachment로, 나머지 본문 없는 행은 unclassified로 보존합니다. 작성자는 아직 판별하지 않으며 미노출 시각도 null입니다.
-    hasMore는 수집한 최대 1000행 안의 페이지 유무이며, 전체 대화의 완전성을 뜻하지 않습니다.
+    offset+limit이 50 이하이면 최근 50행만, 더 깊은 페이지는 최대 1000행을 수집합니다.
+    hasMore는 수집한 행 안의 페이지 유무이며, 전체 대화의 완전성을 뜻하지 않습니다.
     읽기는 현재 창 상태와 초안을 보존합니다.
     """
     from kakaotalk_automation import NativeAX

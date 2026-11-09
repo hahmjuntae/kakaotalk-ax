@@ -55,14 +55,16 @@ class NativeAX(AXOperations):
                     os.unlink(name)
         return binary
 
-    def call(self, action, titles, text=None):
+    def call(self, action, titles, text=None, row_limit=None):
         with ui_session() if action in ("send", "raise") else nullcontext():
-            return self._call(action, titles, text)
+            return self._call(action, titles, text, row_limit)
 
-    def _call(self, action, titles, text=None):
+    def _call(self, action, titles, text=None, row_limit=None):
         request = {"action": action, "windowTitles": titles}
         if text is not None:
             request["text"] = text
+        if row_limit is not None:
+            request["rowLimit"] = row_limit
         binary = self.build("read") if action in ("read", "windows") else self.build()
         result = subprocess.run([str(binary)], input=json.dumps(request, ensure_ascii=False),
                                 capture_output=True, text=True, timeout=12)
@@ -106,7 +108,8 @@ class NativeAX(AXOperations):
             raise ValueError("snapshot_id must be the ID returned by an AX read")
         if offset and not snapshot_id:
             raise ValueError("snapshot_id is required for offset > 0; read the first page again")
-        raw = self.call("read", [window_title])
+        window = row_window(offset, limit)
+        raw = self.call("read", [window_title], row_limit=window)
         if raw.get("status") != "ok":
             return raw
         snapshot = snapshot_digest(raw)
@@ -127,7 +130,7 @@ class NativeAX(AXOperations):
             "coverage": {"scope": "currently_exposed_ax_rows", "historyComplete": False,
                          "consistency": "best_effort", "exposedRowCount": raw["exposedRowCount"],
                          "rowsTruncated": raw["rowsTruncated"], "rowStart": raw["rowStart"],
-                         "rowLimit": 1000, "scrollPerformed": False,
+                         "rowLimit": window, "scrollPerformed": False,
                          "attributeReadMode": raw.get("attributeReadMode", "individual"),
                          "optionalAttributeFailures": raw.get("optionalAttributeFailures", {})},
             "databaseCalls": 0, "uiActions": 0, "elapsedMs": raw["elapsedMs"],
@@ -149,17 +152,21 @@ class NativeAX(AXOperations):
         if output_path and Path(output_path).exists():
             raise ValueError("output_path already exists")
         with ui_session():
-            raw = self.call("read", [window_title])
-            if raw.get("status") != "ok":
-                return raw
-            if snapshot_digest(raw) != snapshot_id:
-                return {"status": "snapshot_changed", "reason": "Read the attachment row again", "databaseCalls": 0}
-            selected = [row for row in raw["rows"] if row["rowIndex"] == row_index]
+            # Try the newest-row window first; read deeper only when the row is older.
+            for window in (ROW_WINDOW, ROW_LIMIT):
+                raw = self.call("read", [window_title], row_limit=window)
+                if raw.get("status") != "ok":
+                    return raw
+                if snapshot_digest(raw) != snapshot_id:
+                    return {"status": "snapshot_changed", "reason": "Read the attachment row again", "databaseCalls": 0}
+                selected = [row for row in raw["rows"] if row["rowIndex"] == row_index]
+                if selected or not raw.get("rowsTruncated"):
+                    break
             if len(selected) != 1 or ax_row(selected[0])["kind"] != "attachment":
                 return {"status": "blocked", "reason": "attachment_row_required", "databaseCalls": 0}
             request = {"action": "attachment", "windowTitles": [window_title], "rowIndex": row_index,
                        "expectedParts": selected[0]["parts"], "expectedCount": raw["exposedRowCount"],
-                       "ocr": ocr}
+                       "ocr": ocr, "rowLimit": window}
             result = subprocess.run([str(self.build("read"))], input=json.dumps(request, ensure_ascii=False),
                                     capture_output=True, text=True, timeout=25)
             if result.returncode:
@@ -182,10 +189,20 @@ class NativeAX(AXOperations):
             return value
 
 
+# Pages inside the newest rows read only that window; deeper pages read up to the old limit.
+ROW_WINDOW = 50
+ROW_LIMIT = 1000
+
+
+def row_window(offset, limit):
+    return ROW_WINDOW if offset + limit <= ROW_WINDOW else ROW_LIMIT
+
+
 def snapshot_digest(raw):
-    return digest(json.dumps({k: raw[k] for k in (
-        "windowTitle", "processId", "rows", "exposedRowCount", "rowStart", "rowsTruncated")},
-        ensure_ascii=False, sort_keys=True))[:24]
+    """Hash the exposed row count and newest rows so every read window yields the same ID."""
+    return digest(json.dumps({"windowTitle": raw["windowTitle"], "processId": raw["processId"],
+                              "exposedRowCount": raw["exposedRowCount"], "rows": raw["rows"][-ROW_WINDOW:]},
+                             ensure_ascii=False, sort_keys=True))[:24]
 
 
 def ax_row(row):

@@ -18,6 +18,7 @@ def text_row(index, text, time=None, date=None):
 class SnapshotNative(NativeAX):
     def __init__(self):
         self.calls = []
+        self.row_limits = []
         self.raw = {"status": "ok", "windowTitle": "Fixture", "processId": 123,
                     "rows": [text_row(0, "같은 말", "오전 11:09", "2026. 11. 2."),
                              text_row(1, "같은 말"), text_row(2, "오전 12:34"),
@@ -25,9 +26,15 @@ class SnapshotNative(NativeAX):
                              {"rowIndex": 4, "parts": [{"role": "AXImage", "AXDescription": "사진"}]}],
                     "exposedRowCount": 5, "rowStart": 0, "rowsTruncated": False, "elapsedMs": 80}
 
-    def call(self, action, titles, text=None):
+    def call(self, action, titles, text=None, row_limit=None):
         self.calls.append((action, titles, text))
-        return copy.deepcopy(self.raw)
+        self.row_limits.append(row_limit)
+        raw = copy.deepcopy(self.raw)
+        # Mimic the native reader returning only the newest row_limit rows.
+        if row_limit is not None and raw.get("status") == "ok" and len(raw["rows"]) > row_limit:
+            raw["rows"] = raw["rows"][-row_limit:]
+            raw.update(rowStart=raw["rows"][0]["rowIndex"], rowsTruncated=True)
+        return raw
 
 
 class AXReadingTests(unittest.TestCase):
@@ -117,6 +124,37 @@ class AXReadingTests(unittest.TestCase):
             with self.subTest(request=request), self.assertRaises(ValueError):
                 self.native.read_messages(**request)
         self.assertFalse(self.native.calls)
+
+
+
+class RowWindowTests(unittest.TestCase):
+    def setUp(self):
+        self.native = SnapshotNative()
+        rows = [text_row(i, f"행 {i}") for i in range(150)]
+        self.native.raw.update(rows=rows, exposedRowCount=150)
+
+    def test_recent_pages_read_only_the_newest_rows(self):
+        first = self.native.read_messages("Fixture", 5)
+        self.assertEqual(self.native.row_limits, [50])
+        self.assertEqual([item["rowIndex"] for item in first["items"]], [145, 146, 147, 148, 149])
+        self.assertEqual(first["coverage"]["rowLimit"], 50)
+        self.assertTrue(first["coverage"]["rowsTruncated"])
+
+    def test_deeper_page_reads_more_rows_with_the_same_snapshot(self):
+        first = self.native.read_messages("Fixture", 50)
+        second = self.native.read_messages("Fixture", 50, 50, first["snapshotId"])
+        third = self.native.read_messages("Fixture", 50, 100, first["snapshotId"])
+        self.assertEqual(self.native.row_limits, [50, 1000, 1000])
+        self.assertEqual(second["status"], "ok")
+        self.assertEqual(third["status"], "ok")
+        self.assertEqual([item["rowIndex"] for item in third["items"]][:2], [0, 1])
+        self.assertEqual(third["snapshotId"], first["snapshotId"])
+
+    def test_new_row_still_invalidates_the_snapshot_across_windows(self):
+        first = self.native.read_messages("Fixture", 50)
+        self.native.raw["rows"].append(text_row(150, "새 행"))
+        self.native.raw["exposedRowCount"] += 1
+        self.assertEqual(self.native.read_messages("Fixture", 50, 100, first["snapshotId"])["status"], "snapshot_changed")
 
 
 if __name__ == "__main__":

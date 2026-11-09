@@ -9,7 +9,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from kakaotalk_automation import ax_row
-from test_ax_reader import SnapshotNative
+from test_ax_reader import SnapshotNative, text_row
 from test_ax_operations import FixtureTestCase
 
 
@@ -148,5 +148,22 @@ class AttachmentTests(unittest.TestCase):
                 self.native.read_attachment('Fixture', 4, **kwargs)
 
 
-if __name__ == '__main__':
+
+class AttachmentWindowTests(unittest.TestCase):
+    def test_older_attachment_row_is_read_with_the_wider_window(self):
+        native = SnapshotNative()
+        rows = [text_row(i, f"행 {i}") for i in range(150)]
+        rows[10] = {"rowIndex": 10, "parts": [{"role": "AXImage", "AXDescription": "사진"}]}
+        native.raw.update(rows=rows, exposedRowCount=150)
+        snapshot = native.read_messages("Fixture", 5)["snapshotId"]
+        response = {"status": "ok", "ocrPerformed": False, "imageBase64": base64.b64encode(b"x").decode()}
+        with tempfile.TemporaryDirectory() as directory, patch.object(native, "build", return_value=Path("/fixture/native")), \
+             patch("kakaotalk_automation.subprocess.run", return_value=SimpleNamespace(returncode=0, stdout=json.dumps(response))) as run:
+            result = native.read_attachment("Fixture", 10, snapshot, str(Path(directory) / "crop.png"))
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(native.row_limits, [50, 50, 1000])
+        self.assertEqual(json.loads(run.call_args.kwargs["input"])["rowLimit"], 1000)
+
+
+if __name__ == "__main__":
     unittest.main()

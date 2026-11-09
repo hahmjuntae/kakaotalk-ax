@@ -43,7 +43,7 @@ CLI는 `.venv/bin/kax ax-call METHOD --args-file FILE`이다.
 `windows`는 확인 가능한 창의 `minimized` 상태도 반환한다.
 
 조회 한도 `limit`은 1~500행이다. `items`에는 본문 없는 행도 포함되므로 메시지 개수와 다르다.
-한 번 수집하는 최대 범위는 AX 노출 1000행이다. 페이지는 `nextOffset`/`snapshotId`를 다음 호출의
+`offset + limit`이 50 이하이면 최근 50행만, 더 깊은 페이지는 AX 노출 최대 1000행을 수집한다. 페이지는 `nextOffset`/`snapshotId`를 다음 호출의
 `offset`/`snapshot_id`로 전달한다. `snapshot_changed`면 첫 페이지부터 다시 읽는다.
 
 `load_more.pages`는 1~10, `search_messages.load_pages`는 0~10이다. `endOfHistory=null`,

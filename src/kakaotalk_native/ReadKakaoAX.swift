@@ -11,7 +11,9 @@ enum ReadFailure: Error { case blocked(String) }
 let started = ProcessInfo.processInfo.systemUptime
 var deadline = started + 8.0
 var uiActions = 0
-let maximumRows = 1000
+// The caller may ask for only the newest rows. Open chats can expose thousands of rows,
+// and reading all of them cannot finish inside the deadline.
+var maximumRows = 1000
 var nodesVisited = 0
 var textBytes = 0
 var optionalAttributeFailures: [String: Int] = [:]
@@ -111,7 +113,10 @@ func controls(_ window: AXUIElement) throws -> (composers: Int, tables: [AXUIEle
         if role == "AXTable" { tables.append(element); return }
         if ["AXRow", "AXCell"].contains(role) { return }
         if role == "AXTextArea" {
-            if try ["메시지 입력", "Message", "Type a message", "Enter a message"].contains(string(element, "AXDescription")) {
+            // Open-chat windows keep a new-message preview text area above the composer whose
+            // AXDescription read returns AXError.failure. It is never the composer, so skip it.
+            if try ["메시지 입력", "Message", "Type a message", "Enter a message"]
+                .contains(string(element, "AXDescription", optional: true)) {
                 composers += 1
             }
             return
@@ -325,6 +330,10 @@ func run() throws -> [String: Any] {
           let request = try JSONSerialization.jsonObject(with: input) as? [String: Any],
           let action = request["action"] as? String, ["windows", "read", "attachment"].contains(action) else {
         throw ReadFailure.blocked("invalid_read_request")
+    }
+    if let limit = request["rowLimit"] {
+        guard let rows = limit as? Int, (1...1000).contains(rows) else { throw ReadFailure.blocked("invalid_read_request") }
+        maximumRows = rows
     }
     guard AXIsProcessTrusted() else { throw ReadFailure.blocked("accessibility_permission_required") }
     guard let app = NSWorkspace.shared.runningApplications.first(where: { $0.bundleIdentifier == "com.kakao.KakaoTalkMac" }) else {

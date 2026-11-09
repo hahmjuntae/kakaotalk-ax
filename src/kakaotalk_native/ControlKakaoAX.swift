@@ -110,7 +110,14 @@ func mainWindow(_ application: AXUIElement) throws -> AXUIElement {
 }
 func ensureChats(_ application: AXUIElement) throws -> AXUIElement {
     let main = try mainWindow(application)
-    func isChats() -> Bool { elements(main).contains { string($0, "AXRole") == "AXStaticText" && ["채팅", "Chats"].contains(string($0, "AXValue")) } }
+    // Newer KakaoTalk builds expose the Chats header as an AXButton title instead of static text.
+    func isChats() -> Bool {
+        elements(main).contains {
+            let role = string($0, "AXRole")
+            let label = role == "AXStaticText" ? string($0, "AXValue") : role == "AXButton" ? string($0, "AXTitle") : ""
+            return ["채팅", "Chats"].contains(label)
+        }
+    }
     if isChats() { return main }
     guard let bar = attr(application, "AXMenuBar") else { throw ControlFailure.blocked("chats_menu_unavailable") }
     let top = elements(bar as! AXUIElement).filter { ["창", "Window"].contains(string($0, "AXTitle")) }

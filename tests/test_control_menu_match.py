@@ -229,6 +229,32 @@ for (names, opened, requireSelf, title) in [
             "exact_window_title_required",
         ])
 
+    def test_chats_pane_detects_static_text_and_button_header(self):
+        source = SOURCE.read_text(encoding="utf-8")
+        body = re.search(r"func isChats\(\) -> Bool \{\n(.*?)\n    \}\n", source, re.S)
+        self.assertIsNotNone(body)
+        harness = """import Foundation
+struct Element { let role: String; let value: String; let title: String }
+func elements(_ list: [Element]) -> [Element] { list }
+func string(_ item: Element, _ key: String) -> String {
+    switch key {
+    case "AXRole": return item.role
+    case "AXValue": return item.value
+    case "AXTitle": return item.title
+    default: return ""
+    }
+}
+func check(_ main: [Element]) -> Bool {
+""" + body.group(1) + """
+}
+print(check([Element(role: "AXStaticText", value: "채팅", title: "")]))
+print(check([Element(role: "AXButton", value: "", title: "채팅")]))
+print(check([Element(role: "AXButton", value: "", title: "Chats")]))
+print(check([Element(role: "AXButton", value: "채팅", title: "친구")]))
+print(check([Element(role: "AXTextField", value: "채팅", title: "채팅")]))
+"""
+        self.assertEqual(self.compile_and_run(harness), ["true", "true", "true", "false", "false"])
+
 
 if __name__ == "__main__":
     unittest.main()
